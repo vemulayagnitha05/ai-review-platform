@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Code Review Platform</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f4f7fb;
+            color: #222;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+        }
+
+        .card {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-top: 15px;
+            margin-bottom: 7px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+
+        button {
+            width: 100%;
+            margin-top: 20px;
+            padding: 13px;
+            background: #222;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #444;
+        }
+
+        #result {
+            margin-top: 30px;
+        }
+
+        .result-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 5px solid #333;
+        }
+
+        .success {
+            color: #16803c;
+            font-weight: bold;
+            font-size: 18px;
+        }
+
+        .error {
+            color: #c62828;
+            font-weight: bold;
+        }
+
+        .info {
+            margin-top: 15px;
+            line-height: 1.8;
+        }
+
+        .issue {
+            margin-top: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+        }
+
+        .severity {
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <div class="header">
+        <h1>AI Code Review Platform</h1>
+        <p>Review GitHub Pull Requests automatically</p>
+    </div>
+
+    <div class="card">
+
+        <label for="repository">
+            GitHub Repository
+        </label>
+
+        <input
+            id="repository"
+            type="text"
+            value="octocat/Hello-World"
+            placeholder="owner/repository"
+        >
+
+        <label for="pullRequest">
+            Pull Request Number
+        </label>
+
+        <input
+            id="pullRequest"
+            type="number"
+            value="1"
+            placeholder="Pull request number"
+        >
+
+        <button onclick="reviewCode()">
+            Review Pull Request
+        </button>
+
+        <div id="result"></div>
+
+    </div>
+
+</div>
+
+
+<script>
+
+async function reviewCode() {
+
+    const repository =
+        document.getElementById("repository").value;
+
+    const pullRequest =
+        document.getElementById("pullRequest").value;
+
+    const result =
+        document.getElementById("result");
+
+    result.innerHTML =
+        "<p>⏳ Reviewing pull request...</p>";
+
+    try {
+
+        const response = await fetch(
+            `/review/pr?repository=${encodeURIComponent(repository)}&pull_request_number=${pullRequest}`
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+
+            result.innerHTML =
+                `<p class="error">
+                    Error: ${data.detail}
+                </p>`;
+
+            return;
+        }
+
+        let html = `
+            <div class="result-card">
+
+                <div class="success">
+                    ✓ Review completed
+                </div>
+
+                <div class="info">
+
+                    <strong>Repository:</strong>
+                    ${data.repository}
+                    <br>
+
+                    <strong>Pull Request:</strong>
+                    #${data.pull_request_number}
+                    <br>
+
+                    <strong>Title:</strong>
+                    ${data.title}
+                    <br>
+
+                    <strong>Review Engine:</strong>
+                    ${data.review_engine}
+                    <br>
+
+                    <strong>Issues Found:</strong>
+                    ${data.issues_found}
+
+                </div>
+        `;
+
+        data.review.forEach(issue => {
+
+            html += `
+                <div class="issue">
+
+                    <div class="severity">
+                        Severity: ${issue.severity}
+                    </div>
+
+                    <p>
+                        <strong>File:</strong>
+                        ${issue.file}
+                    </p>
+
+                    <p>
+                        <strong>Problem:</strong>
+                        ${issue.problem}
+                    </p>
+
+                    <p>
+                        <strong>Why it matters:</strong>
+                        ${issue.why_it_matters}
+                    </p>
+
+                    <p>
+                        <strong>Suggested fix:</strong>
+                        ${issue.suggested_fix}
+                    </p>
+
+                </div>
+            `;
+
+        });
+
+        html += `
+            </div>
+        `;
+
+        result.innerHTML = html;
+
+    } catch (error) {
+
+        result.innerHTML = `
+            <p class="error">
+                Error connecting to server:
+                ${error}
+            </p>
+        `;
+
+    }
+}
+
+</script>
+
+</body>
+</html>
