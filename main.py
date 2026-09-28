@@ -1,6 +1,10 @@
 import os
+import hmac
+import hashlib
+import json
+
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from github import Github
 
@@ -9,8 +13,7 @@ load_dotenv()
 app = FastAPI()
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-
-
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 @app.get("/")
 def read_root():
     return FileResponse("index.html")
@@ -221,7 +224,35 @@ def review_pr(repository: str, pull_request_number: int):
         "review": issues
     }
 @app.post("/webhook/github")
-def github_webhook(payload: dict):
+async def github_webhook(request: Request):
+    body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256")
+
+    if not WEBHOOK_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="WEBHOOK_SECRET is not configured"
+        )
+
+    if not signature:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing webhook signature"
+        )
+
+    expected_signature = "sha256=" + hmac.new(
+        WEBHOOK_SECRET.encode(),
+        body,
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature, expected_signature):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid webhook signature"
+        )
+
+    payload = json.loads(body)
 
     action = payload.get("action")
     pull_request = payload.get("pull_request")
