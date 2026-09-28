@@ -1,9 +1,12 @@
 <!DOCTYPE html>
 <html>
+
 <head>
+
     <title>AI Code Review Platform</title>
 
     <style>
+
         * {
             box-sizing: border-box;
         }
@@ -110,23 +113,37 @@
         .severity {
             font-weight: bold;
             text-transform: uppercase;
+            margin-bottom: 15px;
+        }
+
+        .line-number {
+            font-weight: bold;
         }
 
         pre {
             white-space: pre-wrap;
             word-wrap: break-word;
         }
+
     </style>
+
 </head>
+
 
 <body>
 
 <div class="container">
 
     <div class="header">
+
         <h1>AI Code Review Platform</h1>
-        <p>Review GitHub Pull Requests automatically</p>
+
+        <p>
+            Review GitHub Pull Requests automatically
+        </p>
+
     </div>
+
 
     <div class="card">
 
@@ -137,9 +154,10 @@
         <input
             id="repository"
             type="text"
-            value="octocat/Hello-World"
+            value="vemulayagnitha05/code-review-test"
             placeholder="owner/repository"
         >
+
 
         <label for="pullRequest">
             Pull Request Number
@@ -152,15 +170,18 @@
             placeholder="Pull request number"
         >
 
+
         <button onclick="reviewCode()">
             Review Pull Request
         </button>
+
 
         <div id="result"></div>
 
     </div>
 
 </div>
+
 
 
 <script>
@@ -176,8 +197,10 @@ async function reviewCode() {
     const result =
         document.getElementById("result");
 
+
     result.innerHTML =
         "<p>⏳ Reviewing pull request...</p>";
+
 
     try {
 
@@ -185,7 +208,9 @@ async function reviewCode() {
             `/review/pr?repository=${encodeURIComponent(repository)}&pull_request_number=${pullRequest}`
         );
 
+
         const data = await response.json();
+
 
         if (!response.ok) {
 
@@ -197,90 +222,162 @@ async function reviewCode() {
             return;
         }
 
+
+
         let html = `
+
             <div class="result-card">
 
                 <div class="success">
                     ✓ Review completed
                 </div>
 
+
                 <div class="info">
 
                     <strong>Repository:</strong>
                     ${data.repository}
+
                     <br>
+
 
                     <strong>Pull Request:</strong>
                     #${data.pull_request_number}
+
                     <br>
+
 
                     <strong>Title:</strong>
                     ${data.title}
+
                     <br>
+
 
                     <strong>Review Engine:</strong>
                     ${data.review_engine}
+
                     <br>
+
 
                     <strong>Issues Found:</strong>
                     ${data.issues_found}
 
                 </div>
+
         `;
+
+
 
         data.review.forEach(issue => {
 
+
             html += `
+
                 <div class="issue">
 
+
                     <div class="severity">
-                        Severity: ${issue.severity}
+
+                        Severity:
+                        ${issue.severity}
+
                     </div>
 
+
+
                     <p>
+
                         <strong>File:</strong>
+
                         ${issue.file}
+
                     </p>
 
+
+
+                    <p class="line-number">
+
+                        <strong>Line:</strong>
+
+                        ${issue.line ?? "N/A"}
+
+                    </p>
+
+
+
                     <p>
+
                         <strong>Problem:</strong>
+
                         ${issue.problem}
+
                     </p>
 
+
+
                     <p>
+
                         <strong>Why it matters:</strong>
+
                         ${issue.why_it_matters}
+
                     </p>
 
+
+
                     <p>
+
                         <strong>Suggested fix:</strong>
+
                         ${issue.suggested_fix}
+
                     </p>
+
 
                 </div>
+
             `;
 
         });
 
+
+
         html += `
+
             </div>
+
         `;
+
+
 
         result.innerHTML = html;
 
-    } catch (error) {
+
+    }
+
+
+    catch (error) {
+
 
         result.innerHTML = `
+
             <p class="error">
+
                 Error connecting to server:
+
                 ${error}
+
             </p>
+
         `;
 
     }
+
 }
 
 </script>
 
+
 </body>
+
 </html>

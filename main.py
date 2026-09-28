@@ -14,6 +14,8 @@ app = FastAPI()
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
+
+
 @app.get("/")
 def read_root():
     return FileResponse("index.html")
@@ -87,129 +89,179 @@ def review_pr(repository: str, pull_request_number: int):
 
         filename = file["filename"]
         patch = file["patch"]
-        lower_patch = patch.lower()
 
-        # 1. eval()
-        if "eval(" in patch:
-            issues.append({
-                "severity": "high",
-                "file": filename,
-                "problem": "Use of eval() detected.",
-                "why_it_matters": "eval() can execute dynamically supplied code and may create security vulnerabilities.",
-                "suggested_fix": "Avoid eval() and use safer alternatives."
-            })
+        current_line = 0
 
-        # 2. Hardcoded credentials
-        if (
-            "api_key =" in lower_patch
-            or "password =" in lower_patch
-            or "secret_key =" in lower_patch
-            or "token =" in lower_patch
-        ):
-            issues.append({
-                "severity": "high",
-                "file": filename,
-                "problem": "Possible hardcoded credential detected.",
-                "why_it_matters": "Credentials committed to source code can be exposed through version control.",
-                "suggested_fix": "Use environment variables or a secure secret manager."
-            })
+        for patch_line in patch.splitlines():
 
-        # 3. Debug print statements
-        if "print(" in patch:
-            issues.append({
-                "severity": "low",
-                "file": filename,
-                "problem": "Debug print statement detected.",
-                "why_it_matters": "Debug output may expose information or create noisy production logs.",
-                "suggested_fix": "Use proper application logging instead of print()."
-            })
+            # Find the starting line number of each changed section
+            if patch_line.startswith("@@"):
+                try:
+                    current_line = int(
+                        patch_line.split("+")[1].split(",")[0]
+                    )
+                except (IndexError, ValueError):
+                    current_line = 0
 
-        # 4. TODO comments
-        if "todo" in lower_patch:
-            issues.append({
-                "severity": "low",
-                "file": filename,
-                "problem": "TODO comment detected.",
-                "why_it_matters": "The change may contain unfinished work.",
-                "suggested_fix": "Review and complete the TODO before merging."
-            })
+                continue
 
-        # 5. SQL query construction
-        if (
-            "select * from" in lower_patch
-            or "insert into" in lower_patch
-            or "delete from" in lower_patch
-        ):
-            if "+" in patch or "f\"" in lower_patch or "format(" in lower_patch:
+            # Ignore deleted lines
+            if patch_line.startswith("-") and not patch_line.startswith("---"):
+                continue
+
+            # Track added and unchanged lines
+            if patch_line.startswith("+") and not patch_line.startswith("+++"):
+                line_number = current_line
+                current_line += 1
+            else:
+                line_number = current_line
+                current_line += 1
+
+            line = patch_line.lstrip("+-")
+            lower_line = line.lower()
+
+            # 1. eval()
+            if "eval(" in line:
                 issues.append({
                     "severity": "high",
                     "file": filename,
-                    "problem": "Possible dynamically constructed SQL query detected.",
-                    "why_it_matters": "Building SQL queries from user-controlled values can lead to SQL injection.",
-                    "suggested_fix": "Use parameterized queries or prepared statements."
+                    "line": line_number,
+                    "problem": "Use of eval() detected.",
+                    "why_it_matters": "eval() can execute dynamically supplied code and may create security vulnerabilities.",
+                    "suggested_fix": "Avoid eval() and use safer alternatives."
                 })
 
-        # 6. Shell command execution
-        if (
-            "os.system(" in patch
-            or "subprocess.call(" in patch
-            or "subprocess.popen(" in patch
-        ):
-            issues.append({
-                "severity": "high",
-                "file": filename,
-                "problem": "Shell command execution detected.",
-                "why_it_matters": "Unsanitized input passed to shell commands can create command-injection vulnerabilities.",
-                "suggested_fix": "Validate input and prefer safe subprocess APIs without shell execution."
-            })
+            # 2. Hardcoded credentials
+            if (
+                "api_key =" in lower_line
+                or "password =" in lower_line
+                or "secret_key =" in lower_line
+                or "token =" in lower_line
+            ):
+                issues.append({
+                    "severity": "high",
+                    "file": filename,
+                    "line": line_number,
+                    "problem": "Possible hardcoded credential detected.",
+                    "why_it_matters": "Credentials committed to source code can be exposed through version control.",
+                    "suggested_fix": "Use environment variables or a secure secret manager."
+                })
 
-        # 7. HTTP instead of HTTPS
-        if "http://" in lower_patch:
-            issues.append({
-                "severity": "medium",
-                "file": filename,
-                "problem": "Unencrypted HTTP URL detected.",
-                "why_it_matters": "HTTP traffic can be intercepted or modified in transit.",
-                "suggested_fix": "Use HTTPS where the service supports it."
-            })
+            # 3. Debug print statements
+            if "print(" in line:
+                issues.append({
+                    "severity": "low",
+                    "file": filename,
+                    "line": line_number,
+                    "problem": "Debug print statement detected.",
+                    "why_it_matters": "Debug output may expose information or create noisy production logs.",
+                    "suggested_fix": "Use proper application logging instead of print()."
+                })
 
-        # 8. Broad exception handling
-        if "except exception:" in lower_patch:
-            issues.append({
-                "severity": "low",
-                "file": filename,
-                "problem": "Broad exception handling detected.",
-                "why_it_matters": "Catching every exception can hide unexpected programming errors.",
-                "suggested_fix": "Catch specific exceptions and handle them appropriately."
-            })
+            # 4. TODO comments
+            if "todo" in lower_line:
+                issues.append({
+                    "severity": "low",
+                    "file": filename,
+                    "line": line_number,
+                    "problem": "TODO comment detected.",
+                    "why_it_matters": "The change may contain unfinished work.",
+                    "suggested_fix": "Review and complete the TODO before merging."
+                })
 
-        # 9. Dangerous file operations
-        if (
-            "open(" in patch
-            and ("write" in lower_patch or "'w'" in lower_patch)
-        ):
-            issues.append({
-                "severity": "medium",
-                "file": filename,
-                "problem": "File write operation detected.",
-                "why_it_matters": "Writing files using unvalidated paths can create security or data-integrity problems.",
-                "suggested_fix": "Validate file paths and restrict writes to approved directories."
-            })
+            # 5. SQL query construction
+            if (
+                "select * from" in lower_line
+                or "insert into" in lower_line
+                or "delete from" in lower_line
+            ):
+                if (
+                    "+" in line
+                    or 'f"' in lower_line
+                    or "format(" in lower_line
+                ):
+                    issues.append({
+                        "severity": "high",
+                        "file": filename,
+                        "line": line_number,
+                        "problem": "Possible dynamically constructed SQL query detected.",
+                        "why_it_matters": "Building SQL queries from user-controlled values can lead to SQL injection.",
+                        "suggested_fix": "Use parameterized queries or prepared statements."
+                    })
 
-        # 10. Debugger
-        if "breakpoint()" in patch or "pdb.set_trace()" in patch:
-            issues.append({
-                "severity": "medium",
-                "file": filename,
-                "problem": "Debugger statement detected.",
-                "why_it_matters": "Debugger code should generally not be committed to production code.",
-                "suggested_fix": "Remove debugger statements before merging."
-            })
+            # 6. Shell command execution
+            if (
+                "os.system(" in line
+                or "subprocess.call(" in line
+                or "subprocess.popen(" in line
+            ):
+                issues.append({
+                    "severity": "high",
+                    "file": filename,
+                    "line": line_number,
+                    "problem": "Shell command execution detected.",
+                    "why_it_matters": "Unsanitized input passed to shell commands can create command-injection vulnerabilities.",
+                    "suggested_fix": "Validate input and prefer safe subprocess APIs without shell execution."
+                })
+
+            # 7. HTTP instead of HTTPS
+            if "http://" in lower_line:
+                issues.append({
+                    "severity": "medium",
+                    "file": filename,
+                    "line": line_number,
+                    "problem": "Unencrypted HTTP URL detected.",
+                    "why_it_matters": "HTTP traffic can be intercepted or modified in transit.",
+                    "suggested_fix": "Use HTTPS where the service supports it."
+                })
+
+            # 8. Broad exception handling
+            if "except exception:" in lower_line:
+                issues.append({
+                    "severity": "low",
+                    "file": filename,
+                    "line": line_number,
+                    "problem": "Broad exception handling detected.",
+                    "why_it_matters": "Catching every exception can hide unexpected programming errors.",
+                    "suggested_fix": "Catch specific exceptions and handle them appropriately."
+                })
+
+            # 9. Dangerous file operations
+            if (
+                "open(" in line
+                and (
+                    "write" in lower_line
+                    or "'w'" in lower_line
+                )
+            ):
+                issues.append({
+                    "severity": "medium",
+                    "file": filename,
+                    "line": line_number,
+                    "problem": "File write operation detected.",
+                    "why_it_matters": "Writing files using unvalidated paths can create security or data-integrity problems.",
+                    "suggested_fix": "Validate file paths and restrict writes to approved directories."
+                })
+
+            # 10. Debugger
+            if (
+                "breakpoint()" in line
+                or "pdb.set_trace()" in line
+            ):
+                issues.append({
+                    "severity": "medium",
+                    "file": filename,
+                    "line": line_number,
+                    "problem": "Debugger statement detected.",
+                    "why_it_matters": "Debugger code should generally not be committed to production code.",
+                    "suggested_fix": "Remove debugger statements before merging."
+                })
 
     if not issues:
         issues.append({
             "severity": "info",
             "file": "N/A",
+            "line": "N/A",
             "problem": "No obvious issues detected by the local reviewer.",
             "why_it_matters": "The rule-based checks did not find any of the currently supported patterns.",
             "suggested_fix": "Perform a full manual code review before merging."
@@ -223,9 +275,13 @@ def review_pr(repository: str, pull_request_number: int):
         "issues_found": len(issues),
         "review": issues
     }
+
+
 @app.post("/webhook/github")
 async def github_webhook(request: Request):
+
     body = await request.body()
+
     signature = request.headers.get("X-Hub-Signature-256")
 
     if not WEBHOOK_SECRET:
@@ -246,7 +302,10 @@ async def github_webhook(request: Request):
         hashlib.sha256
     ).hexdigest()
 
-    if not hmac.compare_digest(signature, expected_signature):
+    if not hmac.compare_digest(
+        signature,
+        expected_signature
+    ):
         raise HTTPException(
             status_code=401,
             detail="Invalid webhook signature"
@@ -268,7 +327,11 @@ async def github_webhook(request: Request):
     pr_number = pull_request.get("number")
 
     # Only review relevant pull request events
-    if action not in ["opened", "reopened", "synchronize"]:
+    if action not in [
+        "opened",
+        "reopened",
+        "synchronize"
+    ]:
         return {
             "status": "received",
             "message": "Event received but no review was triggered",
@@ -299,6 +362,9 @@ async def github_webhook(request: Request):
         comment += f"### {issue['severity'].upper()}\n\n"
 
         comment += f"**File:** `{issue['file']}`\n\n"
+
+        if "line" in issue:
+            comment += f"**Line:** `{issue['line']}`\n\n"
 
         comment += f"**Problem:** {issue['problem']}\n\n"
 
