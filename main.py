@@ -94,11 +94,12 @@ def review_pr(repository: str, pull_request_number: int):
 
         for patch_line in patch.splitlines():
 
-            # Find the starting line number of each changed section
+            # GitHub diff header
             if patch_line.startswith("@@"):
                 try:
+                    new_file_part = patch_line.split("+")[1]
                     current_line = int(
-                        patch_line.split("+")[1].split(",")[0]
+                        new_file_part.split(",")[0]
                     )
                 except (IndexError, ValueError):
                     current_line = 0
@@ -109,15 +110,17 @@ def review_pr(repository: str, pull_request_number: int):
             if patch_line.startswith("-") and not patch_line.startswith("---"):
                 continue
 
-            # Track added and unchanged lines
-            if patch_line.startswith("+") and not patch_line.startswith("+++"):
-                line_number = current_line
+            # Ignore unchanged/context lines
+            if not patch_line.startswith("+") or patch_line.startswith("+++"):
                 current_line += 1
-            else:
-                line_number = current_line
-                current_line += 1
+                continue
 
-            line = patch_line.lstrip("+-")
+            # This is an added line
+            line_number = current_line
+            current_line += 1
+
+            # Remove the "+" from the GitHub diff
+            line = patch_line[1:]
             lower_line = line.lower()
 
             # 1. eval()
@@ -262,8 +265,8 @@ def review_pr(repository: str, pull_request_number: int):
             "severity": "info",
             "file": "N/A",
             "line": "N/A",
-            "problem": "No obvious issues detected by the local reviewer.",
-            "why_it_matters": "The rule-based checks did not find any of the currently supported patterns.",
+            "problem": "No obvious issues detected in newly added lines.",
+            "why_it_matters": "The rule-based checks did not find any supported patterns in the new lines.",
             "suggested_fix": "Perform a full manual code review before merging."
         })
 
