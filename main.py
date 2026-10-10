@@ -2,6 +2,9 @@ import os
 import hmac
 import hashlib
 import json
+import subprocess
+import tempfile
+from openai import OpenAI
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -14,6 +17,9 @@ app = FastAPI()
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 @app.get("/")
@@ -56,7 +62,8 @@ def get_github_pr(repository: str, pull_request_number: int):
             "files_changed": pr.changed_files,
             "lines_added": pr.additions,
             "lines_removed": pr.deletions,
-            "changed_files": files
+            "changed_files": files,
+            "head_sha": pr.head.sha
         }
 
     except Exception as e:
@@ -74,7 +81,187 @@ def analyze_pr(repository: str, pull_request_number: int):
         pull_request_number
     )
 
+def run_ai_review(pr_data):
+    findings = []
 
+    for changed_file in pr_data["changed_files"]:
+        filename = changed_file["filename"]
+
+        if changed_file["status"] == "removed":
+            continue
+
+        if not filename.endswith(".py"):
+            continue
+
+        patch = changed_file["patch"]
+
+        if not patch:
+            continue
+
+        prompt = f"""
+You are an expert Python security and code reviewer.
+
+Review the following GitHub pull request changes.
+
+Repository: {pr_data["repository"]}
+Pull Request: #{pr_data["pull_request_number"]}
+File: {filename}
+
+Changed code:
+{patch}
+
+Identify important:
+- security vulnerabilities
+- bugs
+- unsafe coding practices
+- performance problems
+- maintainability problems
+
+Only report issues that are reasonably supported by the code.
+
+For each issue, provide:
+1. severity: high, medium, or low
+2. line: the relevant line number if available
+3. problem
+4. why_it_matters
+5. suggested_fix
+
+Return ONLY valid JSON in this exact format:
+
+{{
+  "issues": [
+    {{
+      "severity": "high",
+      "line": 10,
+      "problem": "Description of the problem",
+      "why_it_matters": "Why this matters",
+      "suggested_fix": "How to fix it"
+    }}
+  ]
+}}
+
+If there are no important issues, return:
+
+{{"issues": []}}
+"""
+
+        try:
+            response = client.responses.create(
+                model="gpt-5-mini",
+                input=prompt
+            )
+
+            result_text = response.output_text.strip()
+
+            ai_result = json.loads(result_text)
+
+            for issue in ai_result.get("issues", []):
+                findings.append({
+                    "tool": "OpenAI",
+                    "severity": issue.get("severity", "medium"),
+                    "file": filename,
+                    "line": issue.get("line", "N/A"),
+                    "problem": issue.get(
+                        "problem",
+                        "AI reviewer identified a potential issue."
+                    ),
+                    "why_it_matters": issue.get(
+                        "why_it_matters",
+                        "This issue may affect security, correctness, or maintainability."
+                    ),
+                    "suggested_fix": issue.get(
+                        "suggested_fix",
+                        "Review the code and apply an appropriate fix."
+                    )
+                })
+
+        except Exception as e:
+            print(f"AI review failed for {filename}: {e}")
+
+    return findings
+def run_static_analysis(pr_data):
+    findings = []
+
+    github = Github(GITHUB_TOKEN)
+    repo = github.get_repo(pr_data["repository"])
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for changed_file in pr_data["changed_files"]:
+            filename = changed_file["filename"]
+
+            if changed_file["status"] == "removed":
+                continue
+
+            if not filename.endswith(".py"):
+                continue
+
+            try:
+                file_content = repo.get_contents(
+                    filename,
+                    ref=pr_data["head_sha"]
+                ).decoded_content.decode("utf-8")
+
+                local_path = os.path.join(temp_dir, filename)
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+                with open(local_path, "w", encoding="utf-8") as f:
+                    f.write(file_content)
+
+                # Run Ruff
+                ruff_result = subprocess.run(
+                    ["ruff", "check", local_path, "--output-format", "json"],
+                    capture_output=True,
+                    text=True
+                )
+
+                if ruff_result.stdout.strip():
+                    try:
+                        ruff_findings = json.loads(ruff_result.stdout)
+
+                        for item in ruff_findings:
+                            findings.append({
+                                "tool": "Ruff",
+                                "severity": "medium",
+                                "file": filename,
+                                "line": item.get("location", {}).get("row"),
+                                "problem": item.get("message", "Ruff issue"),
+                                "why_it_matters": "This may indicate a Python code-quality or correctness issue.",
+                                "suggested_fix": "Review the Ruff warning and update the code accordingly."
+                            })
+                    except json.JSONDecodeError:
+                        pass
+
+                # Run Bandit
+                bandit_result = subprocess.run(
+                    ["bandit", "-f", "json", local_path],
+                    capture_output=True,
+                    text=True
+                )
+
+                if bandit_result.stdout.strip():
+                    try:
+                        bandit_data = json.loads(bandit_result.stdout)
+
+                        for item in bandit_data.get("results", []):
+                            findings.append({
+                                "tool": "Bandit",
+                                "severity": item.get("issue_severity", "medium").lower(),
+                                "file": filename,
+                                "line": item.get("line_number"),
+                                "problem": item.get("issue_text", "Security issue"),
+                                "why_it_matters": item.get(
+                                    "issue_text",
+                                    "This may represent a security risk."
+                                ),
+                                "suggested_fix": "Review the Bandit finding and apply the recommended secure coding practice."
+                            })
+                    except json.JSONDecodeError:
+                        pass
+
+            except Exception as e:
+                print(f"Static analysis failed for {filename}: {e}")
+
+    return findings
 @app.get("/review/pr")
 def review_pr(repository: str, pull_request_number: int):
 
@@ -123,16 +310,17 @@ def review_pr(repository: str, pull_request_number: int):
             line = patch_line[1:]
             lower_line = line.lower()
 
-            # 1. eval()
+           # 1. eval()
             if "eval(" in line:
-                issues.append({
-                    "severity": "high",
-                    "file": filename,
-                    "line": line_number,
-                    "problem": "Use of eval() detected.",
-                    "why_it_matters": "eval() can execute dynamically supplied code and may create security vulnerabilities.",
-                    "suggested_fix": "Avoid eval() and use safer alternatives."
-                })
+               issues.append({
+                 "tool": "Rule-based",
+                 "severity": "high",
+                 "file": filename,
+                 "line": line_number,
+                 "problem": "Use of eval() detected.",
+                 "why_it_matters": "eval() can execute dynamically supplied code and may create security vulnerabilities.",
+                 "suggested_fix": "Avoid eval() and use safer alternatives."
+    })
 
             # 2. Hardcoded credentials
             if (
@@ -142,28 +330,32 @@ def review_pr(repository: str, pull_request_number: int):
                 or "token =" in lower_line
             ):
                 issues.append({
-                    "severity": "high",
-                    "file": filename,
-                    "line": line_number,
-                    "problem": "Possible hardcoded credential detected.",
-                    "why_it_matters": "Credentials committed to source code can be exposed through version control.",
-                    "suggested_fix": "Use environment variables or a secure secret manager."
-                })
+                 "tool": "Rule-based",
+                 "severity": "high",
+                 "file": filename,
+                 "line": line_number,
+                 "problem": "Possible hardcoded credential detected.",
+                 "why_it_matters": "Credentials committed to source code can be exposed through version control.",
+                 "suggested_fix": "Use environment variables or a secure secret manager."
+})
 
+            
             # 3. Debug print statements
             if "print(" in line:
-                issues.append({
+                 issues.append({
+                    "tool": "Rule-based",
                     "severity": "low",
                     "file": filename,
                     "line": line_number,
                     "problem": "Debug print statement detected.",
                     "why_it_matters": "Debug output may expose information or create noisy production logs.",
                     "suggested_fix": "Use proper application logging instead of print()."
-                })
+    })
 
             # 4. TODO comments
             if "todo" in lower_line:
                 issues.append({
+                    "tool": "Rule-based",
                     "severity": "low",
                     "file": filename,
                     "line": line_number,
@@ -184,6 +376,7 @@ def review_pr(repository: str, pull_request_number: int):
                     or "format(" in lower_line
                 ):
                     issues.append({
+                        "tool": "Rule-based",
                         "severity": "high",
                         "file": filename,
                         "line": line_number,
@@ -199,6 +392,7 @@ def review_pr(repository: str, pull_request_number: int):
                 or "subprocess.popen(" in line
             ):
                 issues.append({
+                    "tool": "Rule-based",
                     "severity": "high",
                     "file": filename,
                     "line": line_number,
@@ -210,6 +404,7 @@ def review_pr(repository: str, pull_request_number: int):
             # 7. HTTP instead of HTTPS
             if "http://" in lower_line:
                 issues.append({
+                    "tool": "Rule-based",
                     "severity": "medium",
                     "file": filename,
                     "line": line_number,
@@ -221,6 +416,7 @@ def review_pr(repository: str, pull_request_number: int):
             # 8. Broad exception handling
             if "except exception:" in lower_line:
                 issues.append({
+                    "tool": "Rule-based",
                     "severity": "low",
                     "file": filename,
                     "line": line_number,
@@ -238,6 +434,7 @@ def review_pr(repository: str, pull_request_number: int):
                 )
             ):
                 issues.append({
+                    "tool": "Rule-based",
                     "severity": "medium",
                     "file": filename,
                     "line": line_number,
@@ -252,6 +449,7 @@ def review_pr(repository: str, pull_request_number: int):
                 or "pdb.set_trace()" in line
             ):
                 issues.append({
+                    "tool": "Rule-based",
                     "severity": "medium",
                     "file": filename,
                     "line": line_number,
@@ -259,6 +457,12 @@ def review_pr(repository: str, pull_request_number: int):
                     "why_it_matters": "Debugger code should generally not be committed to production code.",
                     "suggested_fix": "Remove debugger statements before merging."
                 })
+
+            static_findings = run_static_analysis(pr_data)
+    issues.extend(static_findings)
+
+    ai_findings = run_ai_review(pr_data)
+    issues.extend(ai_findings)
 
     if not issues:
         issues.append({
@@ -274,7 +478,7 @@ def review_pr(repository: str, pull_request_number: int):
         "repository": pr_data["repository"],
         "pull_request_number": pr_data["pull_request_number"],
         "title": pr_data["title"],
-        "review_engine": "Local rule-based reviewer",
+        "review_engine": "Rule-based + Ruff + Bandit + OpenAI",
         "issues_found": len(issues),
         "review": issues
     }
