@@ -19,8 +19,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
-
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 @app.get("/")
 def read_root():
