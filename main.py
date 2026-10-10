@@ -83,6 +83,9 @@ def analyze_pr(repository: str, pull_request_number: int):
 def run_ai_review(pr_data):
     findings = []
 
+    if client is None:
+        return findings
+
     for changed_file in pr_data["changed_files"]:
         filename = changed_file["filename"]
 
@@ -270,12 +273,13 @@ def review_pr(repository: str, pull_request_number: int):
     )
 
     issues = []
-
     for file in pr_data["changed_files"]:
-
         filename = file["filename"]
-        patch = file["patch"]
 
+        if not filename.endswith(".py"):
+            continue
+
+        patch = file["patch"]
         current_line = 0
 
         for patch_line in patch.splitlines():
@@ -323,11 +327,15 @@ def review_pr(repository: str, pull_request_number: int):
 
             # 2. Hardcoded credentials
             if (
-                "api_key =" in lower_line
-                or "password =" in lower_line
-                or "secret_key =" in lower_line
-                or "token =" in lower_line
-            ):
+                (
+                   "api_key =" in lower_line
+                   or "password =" in lower_line
+                   or "secret_key =" in lower_line
+                   or "token =" in lower_line
+                  )
+                  and "getenv" not in lower_line
+                  and "environ" not in lower_line
+):
                 issues.append({
                  "tool": "Rule-based",
                  "severity": "high",
@@ -338,7 +346,7 @@ def review_pr(repository: str, pull_request_number: int):
                  "suggested_fix": "Use environment variables or a secure secret manager."
 })
 
-            
+
             # 3. Debug print statements
             if "print(" in line:
                  issues.append({
@@ -388,7 +396,7 @@ def review_pr(repository: str, pull_request_number: int):
             if (
                 "os.system(" in line
                 or "subprocess.call(" in line
-                or "subprocess.popen(" in line
+                or "subprocess.popen(" in lower_line
             ):
                 issues.append({
                     "tool": "Rule-based",
@@ -457,9 +465,8 @@ def review_pr(repository: str, pull_request_number: int):
                     "suggested_fix": "Remove debugger statements before merging."
                 })
 
-            static_findings = run_static_analysis(pr_data)
+    static_findings = run_static_analysis(pr_data)
     issues.extend(static_findings)
-
     ai_findings = run_ai_review(pr_data)
     issues.extend(ai_findings)
 
