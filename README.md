@@ -157,4 +157,24 @@ FastAPI Backend
 &#x20;      GitHub Pull Request
 
 
+## Evaluation
+
+The review system was evaluated using 7 real GitHub Pull Requests with intentionally introduced security and code-quality issues.
+
+The evaluation measured whether the intended issue in each Pull Request was detected by the review pipeline.
+
+| Pull Request | Target issue | Result |
+|---|---|---|
+| #8 | Shell command execution with `shell=True` | Detected |
+| #9 | Hardcoded credential | Detected |
+| #10 | Unsafe use of `eval()` | Detected |
+| #11 | Dynamic SQL / SQL injection risk | Detected |
+| #12 | Debug `print()` statement | Detected |
+| #13 | Broad exception handling | Detected |
+| #14 | Insecure HTTP connection | Detected |
+
+**Result: 7/7 target issues detected.**
+
+This was a controlled evaluation using intentionally introduced issues. It is not a benchmark dataset and does not measure precision, recall, or false-positive rate.
+
 ## Non-Python Review Test
